@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { Token } from "@uniswap/sdk-core";
 import { Pool as UniswapPool, FeeAmount } from "@uniswap/v3-sdk";
-import { Pool as PancakeSwapPool } from "@pancakeswap/v3-sdk";
+import { Pool as Pancak0x980b62da83eff3d4576c647993b0c1d7faf17c73eSwapPool } from "@pancakeswap/v3-sdk";
 import 'dotenv/config';
 
 // 1. Provider Setup
@@ -13,7 +13,7 @@ const provider = new ethers.JsonRpcProvider(
 // 2. Token Setup (Arbitrum Sepolia)
 const WETH = new Token(
   421614,
-  "0x980b62da83eff3d4576c647993b0c1d7faf17c73", // Verified
+  "", // Verified
   18,
   "WETH"
 );
