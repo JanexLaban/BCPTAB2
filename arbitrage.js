@@ -13,7 +13,7 @@ const provider = new ethers.JsonRpcProvider(
 // 2. Token Setup (Arbitrum Sepolia)
 const WETH = new Token(
   421614,
-  "", // Verified
+  "0x980B62Da83EFf3D4576C647993B0C1D7Faf17C73", // Verified
   18,
   "WETH"
 );
