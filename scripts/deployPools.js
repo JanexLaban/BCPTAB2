@@ -7,23 +7,65 @@ import 'dotenv/config';
 // Constants and configurations
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614;
 
-// Factory addresses for Arbitrum Sepolia
+// Updated Factory addresses for Arbitrum Sepolia
 const FACTORY_ADDRESSES = {
-    uniswap: "0xba5973d0d236f7f03a8c3bd262375c2795f2c7b4",
+    // Correct Uniswap V3 Factory address for Arbitrum Sepolia
+    uniswap: "0x248AB79Bbb9bC29bB72f7Cd42F17e054Fc40188e",
+    // PancakeSwap V3 Factory address for Arbitrum Sepolia
     pancakeswap: "0x02a84c1b3BBD7401a5f7fa98a384EBC70bB5749E"
 };
 
-// Complete Factory ABI with events and errors
-const FACTORY_ABI = [
-    "function createPool(address tokenA, address tokenB, uint24 fee) external returns (address pool)",
-    "function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)",
-    "function owner() external view returns (address)",
-    "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
-    "error PoolAlreadyExists()",
-    "error ZeroAddressNotAllowed()",
-    "error TokensMustBeDifferent()",
-    "error UnsupportedFeeAmount(uint24 fee)"
-];
+// Uniswap V3 Factory Interface
+const FACTORY_ABI = {
+    uniswap: [
+        {
+            "inputs": [
+                {"internalType": "address", "name": "tokenA", "type": "address"},
+                {"internalType": "address", "name": "tokenB", "type": "address"},
+                {"internalType": "uint24", "name": "fee", "type": "uint24"}
+            ],
+            "name": "getPool",
+            "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+            "stateMutability": "view",
+            "type": "function"
+        },
+        {
+            "inputs": [
+                {"internalType": "address", "name": "tokenA", "type": "address"},
+                {"internalType": "address", "name": "tokenB", "type": "address"},
+                {"internalType": "uint24", "name": "fee", "type": "uint24"}
+            ],
+            "name": "createPool",
+            "outputs": [{"internalType": "address", "name": "pool", "type": "address"}],
+            "stateMutability": "nonpayable",
+            "type": "function"
+        }
+    ],
+    pancakeswap: [
+        {
+            "inputs": [
+                {"internalType": "address", "name": "tokenA", "type": "address"},
+                {"internalType": "address", "name": "tokenB", "type": "address"},
+                {"internalType": "uint24", "name": "fee", "type": "uint24"}
+            ],
+            "name": "getPool",
+            "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+            "stateMutability": "view",
+            "type": "function"
+        },
+        {
+            "inputs": [
+                {"internalType": "address", "name": "tokenA", "type": "address"},
+                {"internalType": "address", "name": "tokenB", "type": "address"},
+                {"internalType": "uint24", "name": "fee", "type": "uint24"}
+            ],
+            "name": "createPool",
+            "outputs": [{"internalType": "address", "name": "pool", "type": "address"}],
+            "stateMutability": "nonpayable",
+            "type": "function"
+        }
+    ]
+};
 
 // Token Configurations
 const TOKENS = {
@@ -41,15 +83,20 @@ const TOKENS = {
     )
 };
 
-// Provider Setup
-const setupProvider = () => {
+// Provider Setup with retry mechanism
+const setupProvider = async () => {
     if (!process.env.ARBITRUM_SEPOLIA_URL) {
         throw new Error("Missing ARBITRUM_SEPOLIA_URL in environment variables");
     }
-    return new ethers.JsonRpcProvider(process.env.ARBITRUM_SEPOLIA_URL, {
-        chainId: ARBITRUM_SEPOLIA_CHAIN_ID,
-        name: "arbitrum-sepolia"
-    });
+    const provider = new ethers.JsonRpcProvider(process.env.ARBITRUM_SEPOLIA_URL);
+    
+    // Verify provider connection
+    try {
+        await provider.getNetwork();
+        return provider;
+    } catch (error) {
+        throw new Error(`Failed to connect to network: ${error.message}`);
+    }
 };
 
 // Wallet Setup
@@ -60,25 +107,18 @@ const setupWallet = (provider) => {
     return new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 };
 
-// Utility function to validate fee amount
-const validateFeeAmount = (fee) => {
-    const supportedFees = [FeeAmount.LOWEST, FeeAmount.LOW, FeeAmount.MEDIUM, FeeAmount.HIGH];
-    if (!supportedFees.includes(fee)) {
-        throw new Error(`Unsupported fee amount: ${fee}`);
-    }
-};
-
 // Pool Deployment Function
-async function deployPool(dex, tokenA, tokenB, fee, wallet) {  // Added wallet parameter
-    // Validate inputs
+async function deployPool(dex, tokenA, tokenB, fee, wallet) {
     if (!FACTORY_ADDRESSES[dex]) {
         throw new Error(`Unsupported DEX: ${dex}`);
     }
-    validateFeeAmount(fee);
+
+    console.log(`\nDeploying ${dex.toUpperCase()} pool...`);
+    console.log(`Factory Address: ${FACTORY_ADDRESSES[dex]}`);
 
     const factoryContract = new ethers.Contract(
         FACTORY_ADDRESSES[dex],
-        FACTORY_ABI,
+        FACTORY_ABI[dex],
         wallet
     );
 
@@ -88,56 +128,65 @@ async function deployPool(dex, tokenA, tokenB, fee, wallet) {  // Added wallet p
             ? [tokenA, tokenB] 
             : [tokenB, tokenA];
 
-    // Check for existing pool
-    const existingPool = await factoryContract.getPool(token0.address, token1.address, fee);
-    if (existingPool !== "0x0000000000000000000000000000000000000000") {
-        console.log(`${dex.toUpperCase()} pool already exists at ${existingPool}`);
-        return existingPool;
-    }
-
-    console.log(`Deploying ${dex.toUpperCase()} pool...`);
-    console.log(`Token0: ${token0.address}`);
-    console.log(`Token1: ${token1.address}`);
-    console.log(`Fee: ${fee}`);
-
     try {
-        // Create pool with optimized gas settings for Arbitrum
+        // First, verify contract existence
+        const code = await wallet.provider.getCode(FACTORY_ADDRESSES[dex]);
+        if (code === '0x' || code === '0x0') {
+            throw new Error(`No contract found at address ${FACTORY_ADDRESSES[dex]}`);
+        }
+
+        console.log(`Checking for existing pool...`);
+        console.log(`Token0: ${token0.address}`);
+        console.log(`Token1: ${token1.address}`);
+        console.log(`Fee: ${fee}`);
+
+        let existingPool;
+        try {
+            existingPool = await factoryContract.getPool(
+                token0.address,
+                token1.address,
+                fee
+            );
+            console.log(`GetPool response:`, existingPool);
+        } catch (error) {
+            console.log(`Error checking existing pool:`, error);
+            existingPool = ethers.ZeroAddress;
+        }
+
+        if (existingPool && existingPool !== ethers.ZeroAddress) {
+            console.log(`Pool already exists at ${existingPool}`);
+            return existingPool;
+        }
+
+        console.log(`Creating new pool...`);
         const tx = await factoryContract.createPool(
             token0.address,
             token1.address,
             fee,
             {
-                gasLimit: 5000000,
-                maxPriorityFeePerGas: ethers.parseUnits("0.1", "gwei"),
-                maxFeePerGas: ethers.parseUnits("0.1", "gwei")
+                gasLimit: 5000000
             }
         );
 
         console.log(`Transaction hash: ${tx.hash}`);
         const receipt = await tx.wait();
 
-        if (receipt.status === 0) {
+        if (!receipt || receipt.status === 0) {
             throw new Error("Transaction failed");
         }
 
-        // Verify pool creation through events
-        const poolCreatedEvent = receipt.logs.find(
-            log => log.topics[0] === ethers.id("PoolCreated(address,address,uint24,int24,address)")
+        // Wait for a few blocks
+        console.log("Waiting for pool deployment to be confirmed...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        const newPool = await factoryContract.getPool(
+            token0.address,
+            token1.address,
+            fee
         );
 
-        if (!poolCreatedEvent) {
-            throw new Error("Pool creation event not found in transaction logs");
-        }
-
-        // Get and verify the new pool address
-        const poolAddress = await factoryContract.getPool(token0.address, token1.address, fee);
-        if (poolAddress === "0x0000000000000000000000000000000000000000") {
-            throw new Error("Pool address verification failed");
-        }
-
-        console.log(`✅ ${dex.toUpperCase()} Pool deployed successfully`);
-        console.log(`Pool Address: ${poolAddress}`);
-        return poolAddress;
+        console.log(`✅ Pool deployed successfully at: ${newPool}`);
+        return newPool;
 
     } catch (error) {
         console.error(`Failed to deploy ${dex} pool:`, {
@@ -154,16 +203,15 @@ async function deployPool(dex, tokenA, tokenB, fee, wallet) {  // Added wallet p
 // Main execution
 async function main() {
     try {
-        const provider = setupProvider();
+        const provider = await setupProvider();
         const wallet = setupWallet(provider);
 
-        // Deploy Uniswap pool
+        const network = await provider.getNetwork();
+        console.log(`Connected to network: ${network.name} (${network.chainId})`);
+
+        // Only deploy Uniswap pool for now
         console.log("\n--- Deploying Uniswap Pool ---");
         await deployPool("uniswap", TOKENS.WETH, TOKENS.USDC, FeeAmount.MEDIUM, wallet);
-
-        // Deploy PancakeSwap pool
-        console.log("\n--- Deploying PancakeSwap Pool ---");
-        await deployPool("pancakeswap", TOKENS.WETH, TOKENS.USDC, FeeAmount.MEDIUM, wallet);
 
     } catch (error) {
         console.error("Deployment Failed:", error.message);
